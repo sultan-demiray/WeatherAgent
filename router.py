@@ -185,6 +185,18 @@ def get_token_usage(callback: UsageMetadataCallbackHandler) -> dict:
     }
 
 
+def safe_save_token_usage(question: str, route: str, token_usage: dict):
+    """
+    Token kullanım bilgisini PostgreSQL'e kaydeder.
+    Database tarafında hata olursa uygulamanın cevap vermesini engellemez.
+    """
+
+    try:
+        save_token_usage(question, route, token_usage)
+    except Exception as error:
+        print("TOKEN USAGE DATABASE SAVE ERROR:", error)
+
+
 async def get_docs_answer(
     question: str,
     callback: UsageMetadataCallbackHandler
@@ -213,11 +225,13 @@ async def get_docs_answer(
     return result["messages"][-1].content
 
 
-def get_answer(question: str) -> str:
+def get_answer(question: str) -> dict:
     """
     Kullanıcı sorusunu sınıflandırır,
-    ilgili uzman agent'a yönlendirir
-    ve token kullanım bilgisini terminale yazdırır.
+    ilgili uzman agent'a yönlendirir,
+    token kullanım bilgisini terminale yazar,
+    PostgreSQL'e kaydeder
+    ve arayüzde gösterilebilmesi için token bilgisini döndürür.
     """
 
     callback = UsageMetadataCallbackHandler()
@@ -239,28 +253,37 @@ def get_answer(question: str) -> str:
             }
         )
 
+        answer = result["messages"][-1].content
         token_usage = get_token_usage(callback)
 
         print("ROUTE:", route)
         print("TOKEN USAGE:", token_usage)
 
-        save_token_usage(question, route, token_usage)
+        safe_save_token_usage(question, route, token_usage)
 
-        return result["messages"][-1].content
+        return {
+            "answer": answer,
+            "route": route,
+            "token_usage": token_usage
+        }
 
     if route == "docs":
         answer = asyncio.run(
             get_docs_answer(question, callback)
-    )
+        )
 
         token_usage = get_token_usage(callback)
 
         print("ROUTE:", route)
         print("TOKEN USAGE:", token_usage)
 
-        save_token_usage(question, route, token_usage)
+        safe_save_token_usage(question, route, token_usage)
 
-        return answer
+        return {
+            "answer": answer,
+            "route": route,
+            "token_usage": token_usage
+        }
 
     general_response = general_llm.invoke(
         [
@@ -288,14 +311,19 @@ def get_answer(question: str) -> str:
         }
     )
 
+    answer = general_response.content
     token_usage = get_token_usage(callback)
 
     print("ROUTE:", route)
     print("TOKEN USAGE:", token_usage)
 
-    save_token_usage(question, route, token_usage)
+    safe_save_token_usage(question, route, token_usage)
 
-    return general_response.content
+    return {
+        "answer": answer,
+        "route": route,
+        "token_usage": token_usage
+    }
 
 
 def ask_agent_stream(answer: str):

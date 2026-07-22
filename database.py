@@ -17,7 +17,10 @@ def get_connection():
     if not DATABASE_URL:
         raise ValueError("DATABASE_URL .env dosyasında bulunamadı.")
 
-    return psycopg.connect(DATABASE_URL)
+    return psycopg.connect(
+        DATABASE_URL,
+        connect_timeout=5
+    )
 
 
 def create_token_usage_table():
