@@ -8,7 +8,7 @@ Uygulama, kullanıcıdan gelen soruyu LLM tabanlı bir router ile sınıflandır
 - **Docs Agent**: Teknik dokümantasyon sorularını Context7 üzerinden yanıtlar.
 - **General Assistant**: Selamlaşma ve kısa günlük mesajlara cevap verir.
 
-Ayrıca her kullanıcı isteği sonrasında token kullanımı callback üzerinden alınır ve PostgreSQL veritabanına kaydedilir.
+Ayrıca her kullanıcı isteği sonrasında token kullanımı callback üzerinden alınır. Bu token bilgileri hem Streamlit arayüzünde gösterilir hem de PostgreSQL veritabanına kaydedilir.
 
 ---
 
@@ -21,6 +21,7 @@ Ayrıca her kullanıcı isteği sonrasında token kullanımı callback üzerinde
 - LLM tabanlı router ile soru sınıflandırma
 - Weather, docs ve general akışlarını ayrı yönetme
 - Token kullanımını callback ile ölçme
+- Token kullanımını Streamlit arayüzünde gösterme
 - Token kayıtlarını PostgreSQL veritabanında saklama
 - Son token kayıtlarını `test_database.py` ile görüntüleme
 - API key ve gizli bilgileri `.env` dosyasında saklama
@@ -32,8 +33,8 @@ Ayrıca her kullanıcı isteği sonrasında token kullanımı callback üzerinde
 ```text
 WeatherAgent/
 │
-├── app.py                 # Streamlit chat arayüzü
-├── router.py              # LLM router ve yönlendirme mantığı
+├── app.py                 # Streamlit chat arayüzü ve token kullanım gösterimi
+├── router.py              # LLM router, yönlendirme mantığı ve token ölçümü
 ├── weather_agent.py       # Weather agent tanımı
 ├── docs_agent.py          # Docs agent tanımı
 ├── weather_tool.py        # OpenWeather API tool fonksiyonu
@@ -101,10 +102,6 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 OPENWEATHER_API_KEY=your_openweather_api_key_here
 CONTEXT7_API_KEY=your_context7_api_key_here
 
-LANGSMITH_TRACING=true
-LANGSMITH_API_KEY=your_langsmith_api_key_here
-LANGSMITH_PROJECT=weather-docs-agent
-
 DATABASE_URL=postgresql://postgres:your_password@localhost:5432/weather_agent_db
 ```
 
@@ -130,6 +127,12 @@ Tabloyu oluşturmak için:
 
 ```bash
 python -c "from database import create_token_usage_table; create_token_usage_table(); print('Tablo oluşturuldu')"
+```
+
+PostgreSQL server kapalıysa manuel olarak başlatmak için:
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\pg_ctl.exe" -D "C:\postgres-data\18" -l "C:\postgres-data\18\logfile.log" start
 ```
 
 ---
@@ -194,7 +197,26 @@ Her istek sonrasında şu bilgiler elde edilir:
 - Detaylı kullanım bilgisi
 - Kayıt tarihi
 
-Bu bilgiler PostgreSQL veritabanındaki `token_usage_logs` tablosuna kaydedilir.
+Token bilgileri iki farklı yerde kullanılır:
+
+1. **Streamlit arayüzünde gösterilir.**
+2. **PostgreSQL veritabanındaki `token_usage_logs` tablosuna kaydedilir.**
+
+Arayüzde her cevabın altında **Token Kullanımı** alanı bulunur. Bu alanda ilgili cevabın route bilgisi, input token, output token ve total token değerleri gösterilir.
+
+Örnek arayüz çıktısı:
+
+```text
+📊 Token Kullanımı
+
+Route: weather
+
+Input Tokens: 3956
+
+Output Tokens: 275
+
+Total Tokens: 4231
+```
 
 ---
 
@@ -214,26 +236,26 @@ Son Token Kullanım Kayıtları
 ID: 3
 Soru: Streamlit'te st.session_state nasıl kullanılır?
 Route: docs
-Input Tokens: 8880
-Output Tokens: 961
-Total Tokens: 9841
-Tarih: 2026-07-16 17:58:22.121731+03:00
+Input Tokens: 8995
+Output Tokens: 1077
+Total Tokens: 10072
+Tarih: 2026-07-22 ...
 ------------------------------------------------------------
 ID: 2
-Soru: Merhaba nasılsın?
-Route: general
-Input Tokens: 1539
-Output Tokens: 65
-Total Tokens: 1604
-Tarih: 2026-07-16 17:57:43.083973+03:00
-------------------------------------------------------------
-ID: 1
 Soru: İstanbul
 Route: weather
 Input Tokens: 3956
-Output Tokens: 277
-Total Tokens: 4233
-Tarih: 2026-07-16 17:57:25.387216+03:00
+Output Tokens: 275
+Total Tokens: 4231
+Tarih: 2026-07-22 ...
+------------------------------------------------------------
+ID: 1
+Soru: Merhaba
+Route: general
+Input Tokens: 1529
+Output Tokens: 67
+Total Tokens: 1596
+Tarih: 2026-07-22 ...
 ------------------------------------------------------------
 ```
 
@@ -246,17 +268,19 @@ Uygulamanın genel akışı şu şekildedir:
 ```text
 Kullanıcı soru sorar
 ↓
-Router LLM soruyu sınıflandırır
+Router LLM soruyu weather / docs / general olarak sınıflandırır
 ↓
-Soru weather, docs veya general route'larından birine yönlendirilir
+Soru ilgili agent veya LLM akışına yönlendirilir
 ↓
-İlgili agent veya LLM cevap üretir
+Cevap üretilir
 ↓
 Callback ile token bilgisi alınır
 ↓
 Token bilgileri PostgreSQL'e kaydedilir
 ↓
-Cevap Streamlit arayüzünde kullanıcıya gösterilir
+Token bilgileri Streamlit arayüzünde gösterilir
+↓
+Cevap kullanıcıya gösterilir
 ```
 
 ---
@@ -265,9 +289,7 @@ Cevap Streamlit arayüzünde kullanıcıya gösterilir
 
 Router üç farklı kategori kullanır:
 
-```text
-weather
-```
+### weather
 
 Hava durumu soruları için kullanılır.
 
@@ -279,9 +301,7 @@ Ankara
 İzmir hava durumu
 ```
 
-```text
-docs
-```
+### docs
 
 Teknik dokümantasyon soruları için kullanılır.
 
@@ -293,9 +313,7 @@ LangChain create_agent nasıl çalışır?
 Python'da dotenv ne işe yarar?
 ```
 
-```text
-general
-```
+### general
 
 Selamlaşma, teşekkür, kısa günlük konuşmalar veya diğer genel mesajlar için kullanılır.
 
@@ -309,16 +327,10 @@ Teşekkür ederim
 
 ---
 
+## Güvenlik Notu
+
+API key, database şifresi ve diğer gizli bilgiler `.env` dosyasında saklanır.
+
+GitHub'a sadece örnek değişkenleri içeren `.env.example` dosyası yüklenir.
+
 ---
-
-## Geliştirme Notları
-
-Bu projede başlangıçta weather ve docs özellikleri tek bir agent yapısı içinde denenmiştir. Daha sonra yapı, daha kontrollü ve genişletilebilir olması için LLM tabanlı router yaklaşımına ayrılmıştır.
-
-Bu sayede her soru tipi ilgili uzman akışa yönlendirilir:
-
-- Weather soruları weather agent'a
-- Teknik dokümantasyon soruları docs agent'a
-- Genel konuşmalar general assistant'a
-
-Token takibi için callback tabanlı kullanım verisi alınmış ve PostgreSQL'de saklanmıştır.
